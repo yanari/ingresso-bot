@@ -1,0 +1,4 @@
+config.env
+seen.json
+bot.log
+__pycache__/
