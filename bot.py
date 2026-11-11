@@ -43,7 +43,7 @@ def load_config():
 CFG = load_config()
 EVENT_SLUG = CFG.get("EVENT_SLUG", "hayleywilliams-saopaulo")
 SESSION_ID = CFG.get("SESSION_ID", "e631d534-9b29-430c-a72a-9e8957aebd3f")
-MAX_PRICE = float(CFG.get("MAX_PRICE", "300"))
+MAX_PRICE = float(CFG.get("MAX_PRICE", "400"))
 INTERVAL = int(CFG.get("INTERVAL_SECONDS", "30"))
 NTFY_TOPIC = CFG.get("NTFY_TOPIC", "")
 TG_TOKEN = CFG.get("TELEGRAM_TOKEN", "")
