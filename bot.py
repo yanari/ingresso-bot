@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitora a BuyTicket e avisa quando aparecer Meia PCD ou Pista por até R$ X.
+"""Monitora a BuyTicket e avisa quando aparecer Meia PCD ou Meia Estudante (qualquer setor) por até R$ X.
 
 Uso:
     python3 bot.py                 # roda sem parar
@@ -42,13 +42,22 @@ def load_config():
 
 CFG = load_config()
 EVENT_SLUG = CFG.get("EVENT_SLUG", "hayleywilliams-saopaulo")
-SESSION_ID = CFG.get("SESSION_ID", "e631d534-9b29-430c-a72a-9e8957aebd3f")
+# Sessões monitoradas no formato "id=rótulo", separadas por vírgula
+SESSIONS = dict(
+    item.split("=", 1) for item in CFG.get(
+        "SESSIONS",
+        "4baa619d-c551-41b0-8012-5b22e36acea1=12/11,e631d534-9b29-430c-a72a-9e8957aebd3f=13/11",
+    ).split(",") if "=" in item
+)
+# Categorias aceitas (qualquer setor), separadas por vírgula
+CATEGORY_NAMES = [c.strip() for c in CFG.get("CATEGORIES", "Meia PCD,Meia Estudante").split(",") if c.strip()]
+CATEGORIES = [c.lower() for c in CATEGORY_NAMES]
 MAX_PRICE = float(CFG.get("MAX_PRICE", "400"))
 INTERVAL = int(CFG.get("INTERVAL_SECONDS", "30"))
 NTFY_TOPIC = CFG.get("NTFY_TOPIC", "")
 TG_TOKEN = CFG.get("TELEGRAM_TOKEN", "")
 TG_CHAT = CFG.get("TELEGRAM_CHAT_ID", "")
-SESSION_URL = f"{BASE}/event/{EVENT_SLUG}/session/{SESSION_ID}"
+EVENT_URL = f"{BASE}/event/{EVENT_SLUG}"
 
 
 def log(msg):
@@ -73,33 +82,32 @@ def get_json(url):
 
 
 def wanted(ticket_type, category):
-    """Regra: qualquer setor 'Meia PCD', ou qualquer categoria de setor 'Pista'."""
-    cat = category.lower()
-    return ("pcd" in cat and "acompanhante" not in cat) or "pista" in ticket_type.lower()
+    """Regra: categoria está na lista CATEGORIES (qualquer setor)."""
+    return category.strip().lower() in CATEGORIES
 
 
 def check():
-    """Retorna lista de ofertas que batem com o filtro."""
-    tickets = get_json(f"{API}/sessions/{SESSION_ID}/tickets")["tickets"]
+    """Retorna (ofertas que batem com o filtro, menor preço por data·setor·categoria)."""
     hits, cheapest = [], {}
-    for t in tickets:
-        cats = get_json(f"{API}/sessions/{SESSION_ID}/tickets/{t['ticketId']}/categories")["categories"]
-        for c in cats:
-            price = c["amount"]["value"]
-            if not c.get("listingId") or price <= 0:
-                continue
-            if wanted(t["ticketType"], c["name"]):
-                key = f"{t['ticketType']} · {c['name']}"
-                cheapest[key] = price
+    for session_id, label in SESSIONS.items():
+        tickets = get_json(f"{API}/sessions/{session_id}/tickets")["tickets"]
+        for t in tickets:
+            cats = get_json(f"{API}/sessions/{session_id}/tickets/{t['ticketId']}/categories")["categories"]
+            for c in cats:
+                price = c["amount"]["value"]
+                if not c.get("listingId") or price <= 0 or not wanted(t["ticketType"], c["name"]):
+                    continue
+                cheapest[f"{label} {t['ticketType']} · {c['name']}"] = price
                 if price <= MAX_PRICE:
                     hits.append({
+                        "data": label,
                         "setor": t["ticketType"],
                         "categoria": c["name"],
                         "preco": price,
                         "listingId": c["listingId"],
                         "link": f"{BASE}/checkout?listing={c['listingId']}",
                     })
-        time.sleep(0.5)  # gentil com o servidor
+            time.sleep(0.5)  # gentil com o servidor
     return hits, cheapest
 
 
@@ -177,10 +185,10 @@ def main():
     if "--telegram-id" in args:
         return telegram_chat_id()
     if "--test" in args:
-        return notify_all("Teste do bot de ingresso", "Se você viu isso, o aviso funciona ✅", SESSION_URL)
+        return notify_all("Teste do bot de ingresso", "Se você viu isso, o aviso funciona ✅", EVENT_URL)
 
-    log(f"Monitorando {SESSION_URL}")
-    log(f"Filtro: Meia PCD (qualquer setor) ou Pista · até R$ {MAX_PRICE:.0f} · a cada ~{INTERVAL}s")
+    log(f"Monitorando {EVENT_URL} · datas: {', '.join(SESSIONS.values())}")
+    log(f"Filtro: {', '.join(CATEGORY_NAMES)} (qualquer setor) · até R$ {MAX_PRICE:.0f} · a cada ~{INTERVAL}s")
     deadline = None
     for a in sys.argv[1:]:
         if a.startswith("--duration="):
@@ -198,8 +206,8 @@ def main():
                     continue
                 seen[key] = time.time()
                 save_seen(seen)
-                notify_all(f"🎟️ {h['setor']} {h['categoria']} R$ {h['preco']:.0f}",
-                           f"{h['setor']} · {h['categoria']} por R$ {h['preco']:.2f}. Corre!", h["link"])
+                notify_all(f"🎟️ {h['data']} · {h['setor']} {h['categoria']} R$ {h['preco']:.0f}",
+                           f"Dia {h['data']} · {h['setor']} · {h['categoria']} por R$ {h['preco']:.2f}. Corre!", h["link"])
             resumo = ", ".join(f"{k} R${v:.0f}" for k, v in sorted(cheapest.items(), key=lambda x: x[1])) or "nada no filtro"
             log(f"{'✅ ' + str(len(hits)) + ' oferta(s)' if hits else 'nada ≤ R$' + str(int(MAX_PRICE))} | menores: {resumo}")
             if "--once" in args:
@@ -216,7 +224,7 @@ def main():
             wait = min(300, 15 * errors)
             log(f"Erro ({type(e).__name__}: {e}). Tentando de novo em {wait}s.")
             if errors == 10:
-                notify_all("⚠️ Bot de ingresso com erro", f"10 erros seguidos: {e}", SESSION_URL)
+                notify_all("⚠️ Bot de ingresso com erro", f"10 erros seguidos: {e}", EVENT_URL)
             if "--once" in args:
                 return
             time.sleep(wait)
