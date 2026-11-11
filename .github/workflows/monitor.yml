@@ -4,10 +4,15 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      duration:
+        description: "Segundos rodando (teste rápido: 40)"
+        default: "1500"
 
 # Só uma rodada por vez; a próxima fica na fila e começa quando a atual termina.
+# Testes manuais curtos usam outro grupo pra não ficar presos na fila.
 concurrency:
-  group: monitor
+  group: monitor-${{ github.event.inputs.duration == '' && 'main' || github.event.inputs.duration == '1500' && 'main' || 'test' }}
   cancel-in-progress: false
 
 jobs:
@@ -36,7 +41,7 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-        run: python3 -u bot.py --duration=1500
+        run: python3 -u bot.py --duration=${{ github.event.inputs.duration || 1500 }}
 
       - name: Salvar anúncios já avisados
         if: always()
